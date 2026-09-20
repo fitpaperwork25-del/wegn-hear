@@ -22,13 +22,18 @@ type SpeakerInfo = {
 function App() {
   const [status, setStatus] = useState('Start a conversation')
   const [room, setRoom] = useState<Room | null>(null)
-  const [role, setRole] = useState<'listener' | 'speaker' | null>(null)
+  const [role, setRole] =
+    useState<'listener' | 'speaker' | null>(null)
 
   const [conversationId, setConversationId] = useState('')
   const [speakerName, setSpeakerName] = useState('')
   const [speakers, setSpeakers] = useState<SpeakerInfo[]>([])
 
-  const [focusedSpeaker, setFocusedSpeaker] = useState<string | null>(null)
+  const [focusedSpeaker, setFocusedSpeaker] =
+    useState<string | null>(null)
+
+  const [activeSpeakers, setActiveSpeakers] =
+    useState<Set<string>>(new Set())
 
   const [speakerVolumes, setSpeakerVolumes] = useState<
     Record<string, number>
@@ -40,7 +45,9 @@ function App() {
 
   const [copied, setCopied] = useState(false)
 
-  const audioElements = useRef<Map<string, HTMLAudioElement>>(new Map())
+  const audioElements = useRef<Map<string, HTMLAudioElement>>(
+    new Map()
+  )
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -53,7 +60,10 @@ function App() {
     }
   }, [])
 
-  async function getToken(roomName: string, identity: string) {
+  async function getToken(
+    roomName: string,
+    identity: string
+  ) {
     const response = await fetch(
       `${TOKEN_SERVER}/token?room=${encodeURIComponent(
         roomName
@@ -75,7 +85,7 @@ function App() {
 
     const withoutPrefix = identity.slice('speaker-'.length)
 
-    // UUID at the end is 36 characters, plus the preceding hyphen.
+    // UUID is 36 characters, plus the hyphen before it.
     const encodedName = withoutPrefix.slice(0, -37)
 
     try {
@@ -139,7 +149,10 @@ function App() {
       const volume = volumes[identity] ?? 100
 
       element.muted = !isFocused || isMuted
-      element.volume = Math.max(0, Math.min(1, volume / 100))
+      element.volume = Math.max(
+        0,
+        Math.min(1, volume / 100)
+      )
     })
   }
 
@@ -178,7 +191,12 @@ function App() {
         }
 
         setFocusedSpeaker((currentFocus) => {
-          applySpeakerAudio(currentFocus, nextVolumes, nextMuted)
+          applySpeakerAudio(
+            currentFocus,
+            nextVolumes,
+            nextMuted
+          )
+
           return currentFocus
         })
 
@@ -218,28 +236,54 @@ function App() {
         }
       )
 
+      newRoom.on(
+        RoomEvent.ActiveSpeakersChanged,
+        (participants) => {
+          const identities = new Set(
+            participants
+              .filter((participant) =>
+                participant.identity.startsWith('speaker-')
+              )
+              .map((participant) => participant.identity)
+          )
+
+          setActiveSpeakers(identities)
+        }
+      )
+
       newRoom.on(RoomEvent.ParticipantConnected, () => {
         updateSpeakerList(newRoom)
       })
 
-      newRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
-        const element = audioElements.current.get(participant.identity)
+      newRoom.on(
+        RoomEvent.ParticipantDisconnected,
+        (participant) => {
+          const element = audioElements.current.get(
+            participant.identity
+          )
 
-        if (element) {
-          element.remove()
-          audioElements.current.delete(participant.identity)
-        }
-
-        updateSpeakerList(newRoom)
-
-        setFocusedSpeaker((current) => {
-          if (current === participant.identity) {
-            return null
+          if (element) {
+            element.remove()
+            audioElements.current.delete(participant.identity)
           }
 
-          return current
-        })
-      })
+          updateSpeakerList(newRoom)
+
+          setActiveSpeakers((current) => {
+            const next = new Set(current)
+            next.delete(participant.identity)
+            return next
+          })
+
+          setFocusedSpeaker((current) => {
+            if (current === participant.identity) {
+              return null
+            }
+
+            return current
+          })
+        }
+      )
 
       await newRoom.connect(LIVEKIT_URL, token)
       await newRoom.startAudio()
@@ -271,7 +315,9 @@ function App() {
       const roomName = `${ROOM_PREFIX}${conversationId}`
 
       const identity =
-        `speaker-${encodeURIComponent(cleanName)}-${crypto.randomUUID()}`
+        `speaker-${encodeURIComponent(
+          cleanName
+        )}-${crypto.randomUUID()}`
 
       const token = await getToken(roomName, identity)
 
@@ -289,11 +335,14 @@ function App() {
         channelCount: 1,
       })
 
-      await newRoom.localParticipant.publishTrack(microphoneTrack, {
-        source: Track.Source.Microphone,
-        dtx: true,
-        red: true,
-      })
+      await newRoom.localParticipant.publishTrack(
+        microphoneTrack,
+        {
+          source: Track.Source.Microphone,
+          dtx: true,
+          red: true,
+        }
+      )
 
       setRoom(newRoom)
       setRole('speaker')
@@ -404,6 +453,7 @@ function App() {
     setRole(null)
     setSpeakers([])
     setFocusedSpeaker(null)
+    setActiveSpeakers(new Set())
     setSpeakerVolumes({})
     setMutedSpeakers({})
     setConversationId('')
@@ -423,7 +473,9 @@ function App() {
 
         <h2>You've been invited to speak</h2>
 
-        <p>Enter your name, then join the conversation.</p>
+        <p>
+          Enter your name, then join the conversation.
+        </p>
 
         <input
           type="text"
@@ -433,7 +485,10 @@ function App() {
             setSpeakerName(event.target.value)
           }
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && speakerName.trim()) {
+            if (
+              event.key === 'Enter' &&
+              speakerName.trim()
+            ) {
               joinConversation()
             }
           }}
@@ -493,9 +548,18 @@ function App() {
               const isFocused =
                 focusedSpeaker === speaker.identity
 
+              const isSpeaking =
+                activeSpeakers.has(speaker.identity)
+
               return (
                 <li key={speaker.identity}>
                   <strong>{speaker.name}</strong>{' '}
+
+                  {isSpeaking && (
+                    <>
+                      <strong>Speaking ●</strong>{' '}
+                    </>
+                  )}
 
                   <button
                     type="button"
@@ -547,20 +611,27 @@ function App() {
         )}
 
         {speakers.length > 0 && (
-          <button type="button" onClick={autoMode}>
+          <button
+            type="button"
+            onClick={autoMode}
+          >
             Auto — Hear Everyone
           </button>
         )}
 
         <h2>Invite a speaker</h2>
 
-        <p>Send this link to anyone you want to hear.</p>
+        <p>
+          Send this link to anyone you want to hear.
+        </p>
 
         <button
           type="button"
           onClick={copySpeakerLink}
         >
-          {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
+          {copied
+            ? 'Link Copied ✓'
+            : 'Copy Speaker Link'}
         </button>{' '}
 
         <button type="button" onClick={leave}>
