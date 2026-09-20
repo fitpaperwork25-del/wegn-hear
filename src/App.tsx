@@ -1,49 +1,61 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  Participant,
   Room,
   RoomEvent,
   Track,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  createLocalAudioTrack,
 } from 'livekit-client'
 
 import './App.css'
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
+const TOKEN_SERVER = 'http://localhost:3001'
+const ROOM_PREFIX = 'wegn-hear-'
 
-type Speaker = {
+type SpeakerInfo = {
   identity: string
   name: string
-}
-
-type SpeakerVolumes = {
-  [identity: string]: number
 }
 
 function App() {
   const [status, setStatus] = useState('Start a conversation')
   const [room, setRoom] = useState<Room | null>(null)
-  const [conversationId, setConversationId] = useState<string | null>(null)
-  const [speakerConversationId, setSpeakerConversationId] =
-    useState<string | null>(null)
+  const [role, setRole] = useState<'listener' | 'speaker' | null>(null)
+
+  const [conversationId, setConversationId] = useState('')
   const [speakerName, setSpeakerName] = useState('')
-  const [connectedSpeakers, setConnectedSpeakers] = useState<Speaker[]>([])
+  const [speakers, setSpeakers] = useState<SpeakerInfo[]>([])
+
   const [focusedSpeaker, setFocusedSpeaker] = useState<string | null>(null)
-  const [speakerVolumes, setSpeakerVolumes] = useState<SpeakerVolumes>({})
+
+  const [speakerVolumes, setSpeakerVolumes] = useState<
+    Record<string, number>
+  >({})
+
+  const [mutedSpeakers, setMutedSpeakers] = useState<
+    Record<string, boolean>
+  >({})
+
   const [copied, setCopied] = useState(false)
+
+  const audioElements = useRef<Map<string, HTMLAudioElement>>(new Map())
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const joinId = params.get('join')
 
     if (joinId) {
-      setSpeakerConversationId(joinId)
+      setConversationId(joinId)
+      setRole('speaker')
       setStatus('Ready to join conversation')
     }
   }, [])
 
   async function getToken(roomName: string, identity: string) {
     const response = await fetch(
-      `http://localhost:3001/token?room=${encodeURIComponent(
+      `${TOKEN_SERVER}/token?room=${encodeURIComponent(
         roomName
       )}&identity=${encodeURIComponent(identity)}`
     )
@@ -56,256 +68,237 @@ function App() {
     return data.token
   }
 
-  function createConversationId() {
-    return crypto.randomUUID()
-  }
-
-  function getSpeakerLink(id: string) {
-    return `${window.location.origin}?join=${encodeURIComponent(id)}`
-  }
-
-  function getSpeakerDisplayName(participant: Participant) {
-    const identity = participant.identity
-
+  function getSpeakerName(identity: string) {
     if (!identity.startsWith('speaker-')) {
-      return null
+      return identity
     }
 
     const withoutPrefix = identity.slice('speaker-'.length)
-    const lastDash = withoutPrefix.lastIndexOf('-')
 
-    if (lastDash === -1) {
-      return withoutPrefix
+    // UUID at the end is 36 characters, plus the preceding hyphen.
+    const encodedName = withoutPrefix.slice(0, -37)
+
+    try {
+      return decodeURIComponent(encodedName)
+    } catch {
+      return encodedName
     }
-
-    return withoutPrefix.slice(0, lastDash)
   }
 
-  function addSpeaker(participant: Participant) {
-    const name = getSpeakerDisplayName(participant)
+  function updateSpeakerList(currentRoom: Room) {
+    const list: SpeakerInfo[] = []
 
-    if (!name) {
-      return
-    }
-
-    setConnectedSpeakers((current) => {
-      if (current.some((speaker) => speaker.identity === participant.identity)) {
-        return current
+    currentRoom.remoteParticipants.forEach((participant) => {
+      if (!participant.identity.startsWith('speaker-')) {
+        return
       }
 
-      return [
-        ...current,
-        {
-          identity: participant.identity,
-          name,
-        },
-      ]
+      list.push({
+        identity: participant.identity,
+        name: getSpeakerName(participant.identity),
+      })
     })
 
-    setSpeakerVolumes((current) => {
-      if (current[participant.identity] !== undefined) {
-        return current
-      }
-
-      return {
-        ...current,
-        [participant.identity]: 100,
-      }
-    })
-  }
-
-  function removeSpeaker(participant: Participant) {
-    setConnectedSpeakers((current) =>
-      current.filter(
-        (speaker) => speaker.identity !== participant.identity
-      )
-    )
+    setSpeakers(list)
 
     setSpeakerVolumes((current) => {
       const next = { ...current }
-      delete next[participant.identity]
+
+      list.forEach((speaker) => {
+        if (next[speaker.identity] === undefined) {
+          next[speaker.identity] = 100
+        }
+      })
+
       return next
     })
 
-    setFocusedSpeaker((current) =>
-      current === participant.identity ? null : current
-    )
-  }
+    setMutedSpeakers((current) => {
+      const next = { ...current }
 
-  function getParticipantAudioElements(participant: Participant) {
-    const elements: HTMLMediaElement[] = []
-
-    participant.audioTrackPublications.forEach((publication) => {
-      publication.track?.attachedElements.forEach((element) => {
-        elements.push(element)
+      list.forEach((speaker) => {
+        if (next[speaker.identity] === undefined) {
+          next[speaker.identity] = false
+        }
       })
-    })
 
-    return elements
+      return next
+    })
   }
 
-  function applySpeakerVolume(
-    currentRoom: Room,
-    identity: string,
-    volume: number,
-    currentFocus: string | null
+  function applySpeakerAudio(
+    focusIdentity: string | null,
+    volumes: Record<string, number>,
+    muted: Record<string, boolean>
   ) {
-    const participant = currentRoom.remoteParticipants.get(identity)
+    audioElements.current.forEach((element, identity) => {
+      const isFocused =
+        focusIdentity === null || focusIdentity === identity
 
-    if (!participant) {
-      return
+      const isMuted = muted[identity] ?? false
+      const volume = volumes[identity] ?? 100
+
+      element.muted = !isFocused || isMuted
+      element.volume = Math.max(0, Math.min(1, volume / 100))
+    })
+  }
+
+  function attachAudioTrack(
+    track: RemoteAudioTrack,
+    participant: RemoteParticipant
+  ) {
+    const identity = participant.identity
+
+    const existing = audioElements.current.get(identity)
+
+    if (existing) {
+      existing.remove()
+      audioElements.current.delete(identity)
     }
 
-    const effectiveVolume =
-      currentFocus && currentFocus !== identity
-        ? 0
-        : volume / 100
+    const element = track.attach()
 
-    getParticipantAudioElements(participant).forEach((element) => {
-      element.volume = effectiveVolume
-    })
-  }
+    element.autoplay = true
+    element.setAttribute('playsinline', 'true')
 
-  function applyFocusMode(
-    currentRoom: Room,
-    speakerIdentity: string | null,
-    volumes: SpeakerVolumes
-  ) {
-    currentRoom.remoteParticipants.forEach((participant) => {
-      const savedVolume = volumes[participant.identity] ?? 100
+    document.body.appendChild(element)
 
-      const effectiveVolume =
-        speakerIdentity && participant.identity !== speakerIdentity
-          ? 0
-          : savedVolume / 100
+    audioElements.current.set(identity, element)
 
-      getParticipantAudioElements(participant).forEach((element) => {
-        element.volume = effectiveVolume
+    setSpeakerVolumes((currentVolumes) => {
+      const nextVolumes = {
+        ...currentVolumes,
+        [identity]: currentVolumes[identity] ?? 100,
+      }
+
+      setMutedSpeakers((currentMuted) => {
+        const nextMuted = {
+          ...currentMuted,
+          [identity]: currentMuted[identity] ?? false,
+        }
+
+        setFocusedSpeaker((currentFocus) => {
+          applySpeakerAudio(currentFocus, nextVolumes, nextMuted)
+          return currentFocus
+        })
+
+        return nextMuted
       })
+
+      return nextVolumes
     })
-  }
-
-  function selectSpeaker(identity: string) {
-    if (!room) {
-      return
-    }
-
-    const nextFocus =
-      focusedSpeaker === identity ? null : identity
-
-    setFocusedSpeaker(nextFocus)
-    applyFocusMode(room, nextFocus, speakerVolumes)
-  }
-
-  function changeSpeakerVolume(identity: string, nextVolume: number) {
-    const safeVolume = Math.max(0, Math.min(100, nextVolume))
-
-    setSpeakerVolumes((current) => ({
-      ...current,
-      [identity]: safeVolume,
-    }))
-
-    if (room) {
-      applySpeakerVolume(
-        room,
-        identity,
-        safeVolume,
-        focusedSpeaker
-      )
-    }
   }
 
   async function startConversation() {
     try {
       setStatus('Starting conversation...')
 
-      const newConversationId = createConversationId()
+      const id = crypto.randomUUID()
+      const roomName = `${ROOM_PREFIX}${id}`
+      const identity = `listener-${crypto.randomUUID()}`
 
-      const token = await getToken(
-        newConversationId,
-        `listener-${Date.now()}`
+      const token = await getToken(roomName, identity)
+
+      const newRoom = new Room({
+        adaptiveStream: true,
+      })
+
+      newRoom.on(
+        RoomEvent.TrackSubscribed,
+        (track, _publication, participant) => {
+          if (
+            track.kind === Track.Kind.Audio &&
+            participant.identity.startsWith('speaker-')
+          ) {
+            attachAudioTrack(
+              track as RemoteAudioTrack,
+              participant
+            )
+          }
+        }
       )
 
-      const newRoom = new Room()
-
-      newRoom.on(RoomEvent.ParticipantConnected, (participant) => {
-        addSpeaker(participant)
+      newRoom.on(RoomEvent.ParticipantConnected, () => {
+        updateSpeakerList(newRoom)
       })
 
       newRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
-        removeSpeaker(participant)
-      })
+        const element = audioElements.current.get(participant.identity)
 
-      newRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-        if (track.kind === Track.Kind.Audio) {
-          const element = track.attach()
-
-          element.autoplay = true
-
-          const savedVolume =
-            speakerVolumes[participant.identity] ?? 100
-
-          element.volume =
-            focusedSpeaker &&
-            focusedSpeaker !== participant.identity
-              ? 0
-              : savedVolume / 100
-
-          document.body.appendChild(element)
+        if (element) {
+          element.remove()
+          audioElements.current.delete(participant.identity)
         }
+
+        updateSpeakerList(newRoom)
+
+        setFocusedSpeaker((current) => {
+          if (current === participant.identity) {
+            return null
+          }
+
+          return current
+        })
       })
 
       await newRoom.connect(LIVEKIT_URL, token)
-
       await newRoom.startAudio()
 
-      newRoom.remoteParticipants.forEach((participant) => {
-        addSpeaker(participant)
-      })
-
-      setConversationId(newConversationId)
+      setConversationId(id)
       setRoom(newRoom)
-
+      setRole('listener')
       setStatus('Conversation live ✓')
+
+      updateSpeakerList(newRoom)
+
+      window.history.replaceState({}, '', '/')
     } catch (error) {
       console.error(error)
       setStatus('Could not start conversation')
     }
   }
 
-  async function joinAsSpeaker() {
-    if (!speakerConversationId) {
-      return
-    }
+  async function joinConversation() {
+    const cleanName = speakerName.trim()
 
-    const name = speakerName.trim()
-
-    if (!name) {
-      setStatus('Enter your name before joining')
+    if (!cleanName || !conversationId) {
       return
     }
 
     try {
-      setStatus('Connecting speaker...')
+      setStatus('Joining conversation...')
 
-      const token = await getToken(
-        speakerConversationId,
-        `speaker-${name}-${Date.now()}`
-      )
+      const roomName = `${ROOM_PREFIX}${conversationId}`
 
-      const newRoom = new Room()
+      const identity =
+        `speaker-${encodeURIComponent(cleanName)}-${crypto.randomUUID()}`
+
+      const token = await getToken(roomName, identity)
+
+      const newRoom = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+      })
 
       await newRoom.connect(LIVEKIT_URL, token)
 
-      /*
-       * Audio Baseline 1.
-       * Keep this known-good microphone path unchanged.
-       */
-      await newRoom.localParticipant.setMicrophoneEnabled(true)
+      const microphoneTrack = await createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      })
+
+      await newRoom.localParticipant.publishTrack(microphoneTrack, {
+        source: Track.Source.Microphone,
+        dtx: true,
+        red: true,
+      })
 
       setRoom(newRoom)
+      setRole('speaker')
 
-      setStatus(`${name} — microphone live ✓`)
+      setStatus(`${cleanName} — microphone live ✓`)
     } catch (error) {
       console.error(error)
       setStatus('Could not join conversation')
@@ -317,43 +310,265 @@ function App() {
       return
     }
 
-    const speakerLink = getSpeakerLink(conversationId)
+    const link =
+      `${window.location.origin}/?join=${encodeURIComponent(
+        conversationId
+      )}`
 
-    try {
-      await navigator.clipboard.writeText(speakerLink)
+    await navigator.clipboard.writeText(link)
 
-      setCopied(true)
+    setCopied(true)
 
-      window.setTimeout(() => {
-        setCopied(false)
-      }, 2000)
-    } catch (error) {
-      console.error(error)
-      setStatus('Could not copy speaker link')
-    }
+    window.setTimeout(() => {
+      setCopied(false)
+    }, 2000)
+  }
+
+  function focusSpeaker(identity: string) {
+    const nextFocus =
+      focusedSpeaker === identity ? null : identity
+
+    setFocusedSpeaker(nextFocus)
+
+    applySpeakerAudio(
+      nextFocus,
+      speakerVolumes,
+      mutedSpeakers
+    )
+  }
+
+  function autoMode() {
+    setFocusedSpeaker(null)
+
+    applySpeakerAudio(
+      null,
+      speakerVolumes,
+      mutedSpeakers
+    )
+  }
+
+  function changeSpeakerVolume(
+    identity: string,
+    amount: number
+  ) {
+    setSpeakerVolumes((current) => {
+      const currentVolume = current[identity] ?? 100
+
+      const nextVolume = Math.max(
+        0,
+        Math.min(100, currentVolume + amount)
+      )
+
+      const next = {
+        ...current,
+        [identity]: nextVolume,
+      }
+
+      applySpeakerAudio(
+        focusedSpeaker,
+        next,
+        mutedSpeakers
+      )
+
+      return next
+    })
+  }
+
+  function toggleSpeakerMute(identity: string) {
+    setMutedSpeakers((current) => {
+      const next = {
+        ...current,
+        [identity]: !(current[identity] ?? false),
+      }
+
+      applySpeakerAudio(
+        focusedSpeaker,
+        speakerVolumes,
+        next
+      )
+
+      return next
+    })
   }
 
   async function leave() {
     await room?.disconnect()
 
-    document
-      .querySelectorAll('audio')
-      .forEach((element) => element.remove())
+    audioElements.current.forEach((element) => {
+      element.remove()
+    })
+
+    audioElements.current.clear()
 
     setRoom(null)
-    setConversationId(null)
-    setConnectedSpeakers([])
+    setRole(null)
+    setSpeakers([])
     setFocusedSpeaker(null)
     setSpeakerVolumes({})
+    setMutedSpeakers({})
+    setConversationId('')
+    setSpeakerName('')
+    setCopied(false)
+    setStatus('Start a conversation')
 
-    if (speakerConversationId) {
-      setStatus('Ready to join conversation')
-    } else {
-      setStatus('Start a conversation')
-    }
+    window.history.replaceState({}, '', '/')
   }
 
-  const isSpeakerInvite = Boolean(speakerConversationId)
+  if (role === 'speaker' && !room) {
+    return (
+      <main>
+        <h1>WEGN Hear</h1>
+
+        <p>HD Audio</p>
+
+        <h2>You've been invited to speak</h2>
+
+        <p>Enter your name, then join the conversation.</p>
+
+        <input
+          type="text"
+          placeholder="Your name"
+          value={speakerName}
+          onChange={(event) =>
+            setSpeakerName(event.target.value)
+          }
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && speakerName.trim()) {
+              joinConversation()
+            }
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={joinConversation}
+          disabled={!speakerName.trim()}
+        >
+          Join Conversation
+        </button>
+
+        <p>{status}</p>
+      </main>
+    )
+  }
+
+  if (role === 'speaker' && room) {
+    return (
+      <main>
+        <h1>WEGN Hear</h1>
+
+        <p>HD Audio</p>
+
+        <p>{status}</p>
+
+        <button type="button" onClick={leave}>
+          Leave Conversation
+        </button>
+      </main>
+    )
+  }
+
+  if (role === 'listener' && room) {
+    return (
+      <main>
+        <h1>WEGN Hear</h1>
+
+        <p>HD Audio</p>
+
+        <p>{status}</p>
+
+        <h2>Connected Speakers</h2>
+
+        {speakers.length === 0 ? (
+          <p>Waiting for speakers...</p>
+        ) : (
+          <ul>
+            {speakers.map((speaker) => {
+              const volume =
+                speakerVolumes[speaker.identity] ?? 100
+
+              const isMuted =
+                mutedSpeakers[speaker.identity] ?? false
+
+              const isFocused =
+                focusedSpeaker === speaker.identity
+
+              return (
+                <li key={speaker.identity}>
+                  <strong>{speaker.name}</strong>{' '}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      focusSpeaker(speaker.identity)
+                    }
+                  >
+                    {isFocused ? 'Focused ✓' : 'Focus'}
+                  </button>{' '}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      toggleSpeakerMute(speaker.identity)
+                    }
+                  >
+                    {isMuted ? 'Unmute' : 'Mute'}
+                  </button>{' '}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      changeSpeakerVolume(
+                        speaker.identity,
+                        -10
+                      )
+                    }
+                  >
+                    −
+                  </button>{' '}
+
+                  {volume}%{' '}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      changeSpeakerVolume(
+                        speaker.identity,
+                        10
+                      )
+                    }
+                  >
+                    +
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {speakers.length > 0 && (
+          <button type="button" onClick={autoMode}>
+            Auto — Hear Everyone
+          </button>
+        )}
+
+        <h2>Invite a speaker</h2>
+
+        <p>Send this link to anyone you want to hear.</p>
+
+        <button
+          type="button"
+          onClick={copySpeakerLink}
+        >
+          {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
+        </button>{' '}
+
+        <button type="button" onClick={leave}>
+          End Conversation
+        </button>
+      </main>
+    )
+  }
 
   return (
     <main>
@@ -361,139 +576,14 @@ function App() {
 
       <p>HD Audio</p>
 
-      {isSpeakerInvite ? (
-        !room ? (
-          <>
-            <h2>You've been invited to speak</h2>
+      <button
+        type="button"
+        onClick={startConversation}
+      >
+        Start Conversation
+      </button>
 
-            <p>Enter your name, then join the conversation.</p>
-
-            <input
-              type="text"
-              value={speakerName}
-              onChange={(event) => setSpeakerName(event.target.value)}
-              placeholder="Your name"
-              autoComplete="name"
-            />
-
-            <button
-              type="button"
-              onClick={joinAsSpeaker}
-              disabled={!speakerName.trim()}
-            >
-              Join Conversation
-            </button>
-
-            <p>{status}</p>
-          </>
-        ) : (
-          <>
-            <p>{status}</p>
-
-            <button type="button" onClick={leave}>
-              Leave Conversation
-            </button>
-          </>
-        )
-      ) : !room ? (
-        <>
-          <button type="button" onClick={startConversation}>
-            Start Conversation
-          </button>
-
-          <p>{status}</p>
-        </>
-      ) : (
-        <>
-          <p>{status}</p>
-
-          <h2>Connected Speakers</h2>
-
-          {connectedSpeakers.length === 0 ? (
-            <p>Waiting for speakers...</p>
-          ) : (
-            <ul>
-              {connectedSpeakers.map((speaker) => {
-                const volume =
-                  speakerVolumes[speaker.identity] ?? 100
-
-                return (
-                  <li key={speaker.identity}>
-                    <strong>{speaker.name}</strong>{' '}
-
-                    <button
-                      type="button"
-                      onClick={() => selectSpeaker(speaker.identity)}
-                    >
-                      {focusedSpeaker === speaker.identity
-                        ? 'Focused ✓'
-                        : 'Focus'}
-                    </button>
-
-                    {' '}
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        changeSpeakerVolume(
-                          speaker.identity,
-                          volume - 10
-                        )
-                      }
-                      disabled={volume === 0}
-                    >
-                      −
-                    </button>
-
-                    {' '}
-
-                    <span>{volume}%</span>
-
-                    {' '}
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        changeSpeakerVolume(
-                          speaker.identity,
-                          volume + 10
-                        )
-                      }
-                      disabled={volume === 100}
-                    >
-                      +
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-
-          {focusedSpeaker && (
-            <button
-              type="button"
-              onClick={() => {
-                setFocusedSpeaker(null)
-                applyFocusMode(room, null, speakerVolumes)
-              }}
-            >
-              Auto — Hear Everyone
-            </button>
-          )}
-
-          <h2>Invite a speaker</h2>
-
-          <p>Send this link to anyone you want to hear.</p>
-
-          <button type="button" onClick={copySpeakerLink}>
-            {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
-          </button>
-
-          <button type="button" onClick={leave}>
-            End Conversation
-          </button>
-        </>
-      )}
+      <p>{status}</p>
     </main>
   )
 }
