@@ -15,6 +15,10 @@ type Speaker = {
   name: string
 }
 
+type SpeakerVolumes = {
+  [identity: string]: number
+}
+
 function App() {
   const [status, setStatus] = useState('Start a conversation')
   const [room, setRoom] = useState<Room | null>(null)
@@ -24,6 +28,7 @@ function App() {
   const [speakerName, setSpeakerName] = useState('')
   const [connectedSpeakers, setConnectedSpeakers] = useState<Speaker[]>([])
   const [focusedSpeaker, setFocusedSpeaker] = useState<string | null>(null)
+  const [speakerVolumes, setSpeakerVolumes] = useState<SpeakerVolumes>({})
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -96,6 +101,17 @@ function App() {
         },
       ]
     })
+
+    setSpeakerVolumes((current) => {
+      if (current[participant.identity] !== undefined) {
+        return current
+      }
+
+      return {
+        ...current,
+        [participant.identity]: 100,
+      }
+    })
   }
 
   function removeSpeaker(participant: Participant) {
@@ -105,30 +121,66 @@ function App() {
       )
     )
 
+    setSpeakerVolumes((current) => {
+      const next = { ...current }
+      delete next[participant.identity]
+      return next
+    })
+
     setFocusedSpeaker((current) =>
       current === participant.identity ? null : current
     )
   }
 
+  function getParticipantAudioElements(participant: Participant) {
+    const elements: HTMLMediaElement[] = []
+
+    participant.audioTrackPublications.forEach((publication) => {
+      publication.track?.attachedElements.forEach((element) => {
+        elements.push(element)
+      })
+    })
+
+    return elements
+  }
+
+  function applySpeakerVolume(
+    currentRoom: Room,
+    identity: string,
+    volume: number,
+    currentFocus: string | null
+  ) {
+    const participant = currentRoom.remoteParticipants.get(identity)
+
+    if (!participant) {
+      return
+    }
+
+    const effectiveVolume =
+      currentFocus && currentFocus !== identity
+        ? 0
+        : volume / 100
+
+    getParticipantAudioElements(participant).forEach((element) => {
+      element.volume = effectiveVolume
+    })
+  }
+
   function applyFocusMode(
     currentRoom: Room,
-    speakerIdentity: string | null
+    speakerIdentity: string | null,
+    volumes: SpeakerVolumes
   ) {
     currentRoom.remoteParticipants.forEach((participant) => {
-      participant.audioTrackPublications.forEach((publication) => {
-        const audioElement = publication.track?.attachedElements[0]
+      const savedVolume = volumes[participant.identity] ?? 100
 
-        if (!audioElement) {
-          return
-        }
+      const effectiveVolume =
+        speakerIdentity && participant.identity !== speakerIdentity
+          ? 0
+          : savedVolume / 100
 
-        if (speakerIdentity === null) {
-          audioElement.volume = 1
-          return
-        }
-
-        audioElement.volume =
-          participant.identity === speakerIdentity ? 1 : 0
+      getParticipantAudioElements(participant).forEach((element) => {
+        element.volume = effectiveVolume
       })
     })
   }
@@ -142,7 +194,25 @@ function App() {
       focusedSpeaker === identity ? null : identity
 
     setFocusedSpeaker(nextFocus)
-    applyFocusMode(room, nextFocus)
+    applyFocusMode(room, nextFocus, speakerVolumes)
+  }
+
+  function changeSpeakerVolume(identity: string, nextVolume: number) {
+    const safeVolume = Math.max(0, Math.min(100, nextVolume))
+
+    setSpeakerVolumes((current) => ({
+      ...current,
+      [identity]: safeVolume,
+    }))
+
+    if (room) {
+      applySpeakerVolume(
+        room,
+        identity,
+        safeVolume,
+        focusedSpeaker
+      )
+    }
   }
 
   async function startConversation() {
@@ -166,12 +236,20 @@ function App() {
         removeSpeaker(participant)
       })
 
-      newRoom.on(RoomEvent.TrackSubscribed, (track) => {
+      newRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
         if (track.kind === Track.Kind.Audio) {
           const element = track.attach()
 
           element.autoplay = true
-          element.volume = 1
+
+          const savedVolume =
+            speakerVolumes[participant.identity] ?? 100
+
+          element.volume =
+            focusedSpeaker &&
+            focusedSpeaker !== participant.identity
+              ? 0
+              : savedVolume / 100
 
           document.body.appendChild(element)
         }
@@ -266,6 +344,7 @@ function App() {
     setConversationId(null)
     setConnectedSpeakers([])
     setFocusedSpeaker(null)
+    setSpeakerVolumes({})
 
     if (speakerConversationId) {
       setStatus('Ready to join conversation')
@@ -334,20 +413,59 @@ function App() {
             <p>Waiting for speakers...</p>
           ) : (
             <ul>
-              {connectedSpeakers.map((speaker) => (
-                <li key={speaker.identity}>
-                  {speaker.name}{' '}
+              {connectedSpeakers.map((speaker) => {
+                const volume =
+                  speakerVolumes[speaker.identity] ?? 100
 
-                  <button
-                    type="button"
-                    onClick={() => selectSpeaker(speaker.identity)}
-                  >
-                    {focusedSpeaker === speaker.identity
-                      ? 'Focused ✓'
-                      : 'Focus'}
-                  </button>
-                </li>
-              ))}
+                return (
+                  <li key={speaker.identity}>
+                    <strong>{speaker.name}</strong>{' '}
+
+                    <button
+                      type="button"
+                      onClick={() => selectSpeaker(speaker.identity)}
+                    >
+                      {focusedSpeaker === speaker.identity
+                        ? 'Focused ✓'
+                        : 'Focus'}
+                    </button>
+
+                    {' '}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        changeSpeakerVolume(
+                          speaker.identity,
+                          volume - 10
+                        )
+                      }
+                      disabled={volume === 0}
+                    >
+                      −
+                    </button>
+
+                    {' '}
+
+                    <span>{volume}%</span>
+
+                    {' '}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        changeSpeakerVolume(
+                          speaker.identity,
+                          volume + 10
+                        )
+                      }
+                      disabled={volume === 100}
+                    >
+                      +
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           )}
 
@@ -356,7 +474,7 @@ function App() {
               type="button"
               onClick={() => {
                 setFocusedSpeaker(null)
-                applyFocusMode(room, null)
+                applyFocusMode(room, null, speakerVolumes)
               }}
             >
               Auto — Hear Everyone
