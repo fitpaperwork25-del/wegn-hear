@@ -11,8 +11,15 @@ import {
 import './App.css'
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
-const TOKEN_SERVER = 'http://localhost:3001'
+
+// Use the same host that opened WEGN Hear.
+// Laptop: localhost:3001
+// Phone:   192.168.x.x:3001
+const TOKEN_SERVER =
+  `http://${window.location.hostname}:3001`
+
 const ROOM_PREFIX = 'wegn-hear-'
+const AUTO_HOLD_MS = 800
 
 type SpeakerInfo = {
   identity: string
@@ -22,6 +29,7 @@ type SpeakerInfo = {
 function App() {
   const [status, setStatus] = useState('Start a conversation')
   const [room, setRoom] = useState<Room | null>(null)
+
   const [role, setRole] =
     useState<'listener' | 'speaker' | null>(null)
 
@@ -29,7 +37,13 @@ function App() {
   const [speakerName, setSpeakerName] = useState('')
   const [speakers, setSpeakers] = useState<SpeakerInfo[]>([])
 
+  const [mode, setMode] =
+    useState<'auto' | 'focus'>('auto')
+
   const [focusedSpeaker, setFocusedSpeaker] =
+    useState<string | null>(null)
+
+  const [autoSpeaker, setAutoSpeaker] =
     useState<string | null>(null)
 
   const [activeSpeakers, setActiveSpeakers] =
@@ -49,6 +63,18 @@ function App() {
     new Map()
   )
 
+  const modeRef = useRef<'auto' | 'focus'>('auto')
+
+  const focusedSpeakerRef = useRef<string | null>(null)
+
+  const autoSpeakerRef = useRef<string | null>(null)
+
+  const speakerVolumesRef = useRef<Record<string, number>>({})
+
+  const mutedSpeakersRef = useRef<Record<string, boolean>>({})
+
+  const autoHoldTimer = useRef<number | null>(null)
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const joinId = params.get('join')
@@ -59,6 +85,28 @@ function App() {
       setStatus('Ready to join conversation')
     }
   }, [])
+
+  function setCurrentMode(nextMode: 'auto' | 'focus') {
+    modeRef.current = nextMode
+    setMode(nextMode)
+  }
+
+  function setCurrentFocus(identity: string | null) {
+    focusedSpeakerRef.current = identity
+    setFocusedSpeaker(identity)
+  }
+
+  function setCurrentAutoSpeaker(identity: string | null) {
+    autoSpeakerRef.current = identity
+    setAutoSpeaker(identity)
+  }
+
+  function clearAutoHoldTimer() {
+    if (autoHoldTimer.current !== null) {
+      window.clearTimeout(autoHoldTimer.current)
+      autoHoldTimer.current = null
+    }
+  }
 
   async function getToken(
     roomName: string,
@@ -120,6 +168,8 @@ function App() {
         }
       })
 
+      speakerVolumesRef.current = next
+
       return next
     })
 
@@ -132,28 +182,50 @@ function App() {
         }
       })
 
+      mutedSpeakersRef.current = next
+
       return next
     })
   }
 
   function applySpeakerAudio(
-    focusIdentity: string | null,
+    targetIdentity: string | null,
     volumes: Record<string, number>,
     muted: Record<string, boolean>
   ) {
     audioElements.current.forEach((element, identity) => {
-      const isFocused =
-        focusIdentity === null || focusIdentity === identity
+      const shouldHear =
+        targetIdentity === null ||
+        targetIdentity === identity
 
       const isMuted = muted[identity] ?? false
       const volume = volumes[identity] ?? 100
 
-      element.muted = !isFocused || isMuted
+      element.muted = !shouldHear || isMuted
+
       element.volume = Math.max(
         0,
         Math.min(1, volume / 100)
       )
     })
+  }
+
+  function applyCurrentListeningMode() {
+    if (modeRef.current === 'focus') {
+      applySpeakerAudio(
+        focusedSpeakerRef.current,
+        speakerVolumesRef.current,
+        mutedSpeakersRef.current
+      )
+
+      return
+    }
+
+    applySpeakerAudio(
+      autoSpeakerRef.current,
+      speakerVolumesRef.current,
+      mutedSpeakersRef.current
+    )
   }
 
   function attachAudioTrack(
@@ -184,27 +256,75 @@ function App() {
         [identity]: currentVolumes[identity] ?? 100,
       }
 
+      speakerVolumesRef.current = nextVolumes
+
       setMutedSpeakers((currentMuted) => {
         const nextMuted = {
           ...currentMuted,
           [identity]: currentMuted[identity] ?? false,
         }
 
-        setFocusedSpeaker((currentFocus) => {
-          applySpeakerAudio(
-            currentFocus,
-            nextVolumes,
-            nextMuted
-          )
+        mutedSpeakersRef.current = nextMuted
 
-          return currentFocus
-        })
+        window.setTimeout(() => {
+          applyCurrentListeningMode()
+        }, 0)
 
         return nextMuted
       })
 
       return nextVolumes
     })
+  }
+
+  function handleActiveSpeakers(
+    participants: RemoteParticipant[]
+  ) {
+    const speakerParticipants = participants.filter(
+      (participant) =>
+        participant.identity.startsWith('speaker-')
+    )
+
+    setActiveSpeakers(
+      new Set(
+        speakerParticipants.map(
+          (participant) => participant.identity
+        )
+      )
+    )
+
+    if (modeRef.current !== 'auto') {
+      return
+    }
+
+    const strongestSpeaker =
+      speakerParticipants[0]?.identity ?? null
+
+    if (!strongestSpeaker) {
+      return
+    }
+
+    if (strongestSpeaker === autoSpeakerRef.current) {
+      return
+    }
+
+    clearAutoHoldTimer()
+
+    autoHoldTimer.current = window.setTimeout(() => {
+      if (modeRef.current !== 'auto') {
+        return
+      }
+
+      setCurrentAutoSpeaker(strongestSpeaker)
+
+      applySpeakerAudio(
+        strongestSpeaker,
+        speakerVolumesRef.current,
+        mutedSpeakersRef.current
+      )
+
+      autoHoldTimer.current = null
+    }, AUTO_HOLD_MS)
   }
 
   async function startConversation() {
@@ -239,15 +359,12 @@ function App() {
       newRoom.on(
         RoomEvent.ActiveSpeakersChanged,
         (participants) => {
-          const identities = new Set(
-            participants
-              .filter((participant) =>
-                participant.identity.startsWith('speaker-')
-              )
-              .map((participant) => participant.identity)
+          handleActiveSpeakers(
+            participants.filter(
+              (participant) =>
+                participant instanceof RemoteParticipant
+            )
           )
-
-          setActiveSpeakers(identities)
         }
       )
 
@@ -275,18 +392,31 @@ function App() {
             return next
           })
 
-          setFocusedSpeaker((current) => {
-            if (current === participant.identity) {
-              return null
-            }
+          if (
+            focusedSpeakerRef.current === participant.identity
+          ) {
+            setCurrentFocus(null)
+            setCurrentMode('auto')
+          }
 
-            return current
-          })
+          if (
+            autoSpeakerRef.current === participant.identity
+          ) {
+            setCurrentAutoSpeaker(null)
+          }
+
+          window.setTimeout(() => {
+            applyCurrentListeningMode()
+          }, 0)
         }
       )
 
       await newRoom.connect(LIVEKIT_URL, token)
       await newRoom.startAudio()
+
+      setCurrentMode('auto')
+      setCurrentFocus(null)
+      setCurrentAutoSpeaker(null)
 
       setConversationId(id)
       setRoom(newRoom)
@@ -374,25 +504,28 @@ function App() {
   }
 
   function focusSpeaker(identity: string) {
-    const nextFocus =
-      focusedSpeaker === identity ? null : identity
+    clearAutoHoldTimer()
 
-    setFocusedSpeaker(nextFocus)
+    setCurrentMode('focus')
+    setCurrentFocus(identity)
 
     applySpeakerAudio(
-      nextFocus,
-      speakerVolumes,
-      mutedSpeakers
+      identity,
+      speakerVolumesRef.current,
+      mutedSpeakersRef.current
     )
   }
 
   function autoMode() {
-    setFocusedSpeaker(null)
+    clearAutoHoldTimer()
+
+    setCurrentMode('auto')
+    setCurrentFocus(null)
 
     applySpeakerAudio(
-      null,
-      speakerVolumes,
-      mutedSpeakers
+      autoSpeakerRef.current,
+      speakerVolumesRef.current,
+      mutedSpeakersRef.current
     )
   }
 
@@ -413,11 +546,9 @@ function App() {
         [identity]: nextVolume,
       }
 
-      applySpeakerAudio(
-        focusedSpeaker,
-        next,
-        mutedSpeakers
-      )
+      speakerVolumesRef.current = next
+
+      applyCurrentListeningMode()
 
       return next
     })
@@ -430,17 +561,17 @@ function App() {
         [identity]: !(current[identity] ?? false),
       }
 
-      applySpeakerAudio(
-        focusedSpeaker,
-        speakerVolumes,
-        next
-      )
+      mutedSpeakersRef.current = next
+
+      applyCurrentListeningMode()
 
       return next
     })
   }
 
   async function leave() {
+    clearAutoHoldTimer()
+
     await room?.disconnect()
 
     audioElements.current.forEach((element) => {
@@ -449,10 +580,18 @@ function App() {
 
     audioElements.current.clear()
 
+    modeRef.current = 'auto'
+    focusedSpeakerRef.current = null
+    autoSpeakerRef.current = null
+    speakerVolumesRef.current = {}
+    mutedSpeakersRef.current = {}
+
     setRoom(null)
     setRole(null)
     setSpeakers([])
+    setMode('auto')
     setFocusedSpeaker(null)
+    setAutoSpeaker(null)
     setActiveSpeakers(new Set())
     setSpeakerVolumes({})
     setMutedSpeakers({})
@@ -532,6 +671,13 @@ function App() {
 
         <p>{status}</p>
 
+        <p>
+          Mode:{' '}
+          <strong>
+            {mode === 'auto' ? 'Auto' : 'Focus'}
+          </strong>
+        </p>
+
         <h2>Connected Speakers</h2>
 
         {speakers.length === 0 ? (
@@ -546,7 +692,12 @@ function App() {
                 mutedSpeakers[speaker.identity] ?? false
 
               const isFocused =
+                mode === 'focus' &&
                 focusedSpeaker === speaker.identity
+
+              const isAutoSelected =
+                mode === 'auto' &&
+                autoSpeaker === speaker.identity
 
               const isSpeaking =
                 activeSpeakers.has(speaker.identity)
@@ -561,13 +712,21 @@ function App() {
                     </>
                   )}
 
+                  {isAutoSelected && (
+                    <>
+                      <strong>Auto ✓</strong>{' '}
+                    </>
+                  )}
+
                   <button
                     type="button"
                     onClick={() =>
                       focusSpeaker(speaker.identity)
                     }
                   >
-                    {isFocused ? 'Focused ✓' : 'Focus'}
+                    {isFocused
+                      ? 'Focused ✓'
+                      : 'Focus'}
                   </button>{' '}
 
                   <button
@@ -614,8 +773,11 @@ function App() {
           <button
             type="button"
             onClick={autoMode}
+            disabled={mode === 'auto'}
           >
-            Auto — Hear Everyone
+            {mode === 'auto'
+              ? 'Auto Mode ✓'
+              : 'Return to Auto'}
           </button>
         )}
 
