@@ -5,6 +5,7 @@ import {
   Track,
   RemoteAudioTrack,
   RemoteParticipant,
+  DisconnectReason,
   createLocalAudioTrack,
 } from 'livekit-client'
 
@@ -12,9 +13,6 @@ import './App.css'
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
 
-// Use the same host that opened WEGN Hear.
-// Laptop: localhost:3001
-// Phone:   192.168.x.x:3001
 const TOKEN_SERVER =
   `http://${window.location.hostname}:3001`
 
@@ -59,20 +57,18 @@ function App() {
 
   const [copied, setCopied] = useState(false)
 
+  const [conversationEnded, setConversationEnded] =
+    useState(false)
+
   const audioElements = useRef<Map<string, HTMLAudioElement>>(
     new Map()
   )
 
   const modeRef = useRef<'auto' | 'focus'>('auto')
-
   const focusedSpeakerRef = useRef<string | null>(null)
-
   const autoSpeakerRef = useRef<string | null>(null)
-
   const speakerVolumesRef = useRef<Record<string, number>>({})
-
   const mutedSpeakersRef = useRef<Record<string, boolean>>({})
-
   const autoHoldTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -132,8 +128,6 @@ function App() {
     }
 
     const withoutPrefix = identity.slice('speaker-'.length)
-
-    // UUID is 36 characters, plus the hyphen before it.
     const encodedName = withoutPrefix.slice(0, -37)
 
     try {
@@ -169,7 +163,6 @@ function App() {
       })
 
       speakerVolumesRef.current = next
-
       return next
     })
 
@@ -183,7 +176,6 @@ function App() {
       })
 
       mutedSpeakersRef.current = next
-
       return next
     })
   }
@@ -233,7 +225,6 @@ function App() {
     participant: RemoteParticipant
   ) {
     const identity = participant.identity
-
     const existing = audioElements.current.get(identity)
 
     if (existing) {
@@ -247,7 +238,6 @@ function App() {
     element.setAttribute('playsinline', 'true')
 
     document.body.appendChild(element)
-
     audioElements.current.set(identity, element)
 
     setSpeakerVolumes((currentVolumes) => {
@@ -329,6 +319,7 @@ function App() {
 
   async function startConversation() {
     try {
+      setConversationEnded(false)
       setStatus('Starting conversation...')
 
       const id = crypto.randomUUID()
@@ -440,6 +431,7 @@ function App() {
     }
 
     try {
+      setConversationEnded(false)
       setStatus('Joining conversation...')
 
       const roomName = `${ROOM_PREFIX}${conversationId}`
@@ -455,6 +447,17 @@ function App() {
         adaptiveStream: true,
         dynacast: true,
       })
+
+      newRoom.on(
+        RoomEvent.Disconnected,
+        (reason) => {
+          if (reason === DisconnectReason.ROOM_DELETED) {
+            setRoom(null)
+            setConversationEnded(true)
+            setStatus('Conversation ended')
+          }
+        }
+      )
 
       await newRoom.connect(LIVEKIT_URL, token)
 
@@ -569,10 +572,8 @@ function App() {
     })
   }
 
-  async function leave() {
+  function resetLocalConversation() {
     clearAutoHoldTimer()
-
-    await room?.disconnect()
 
     audioElements.current.forEach((element) => {
       element.remove()
@@ -598,9 +599,63 @@ function App() {
     setConversationId('')
     setSpeakerName('')
     setCopied(false)
+    setConversationEnded(false)
     setStatus('Start a conversation')
 
     window.history.replaceState({}, '', '/')
+  }
+
+  async function leave() {
+    await room?.disconnect()
+    resetLocalConversation()
+  }
+
+  async function endConversation() {
+    if (!conversationId) {
+      return
+    }
+
+    try {
+      setStatus('Ending conversation...')
+
+      const roomName = `${ROOM_PREFIX}${conversationId}`
+
+      const response = await fetch(
+        `${TOKEN_SERVER}/end-room`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            room: roomName,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('End conversation request failed')
+      }
+
+      resetLocalConversation()
+    } catch (error) {
+      console.error(error)
+      setStatus('Could not end conversation')
+    }
+  }
+
+  if (role === 'speaker' && conversationEnded) {
+    return (
+      <main>
+        <h1>WEGN Hear</h1>
+
+        <p>HD Audio</p>
+
+        <h2>Conversation ended</h2>
+
+        <p>The listener ended this conversation.</p>
+      </main>
+    )
   }
 
   if (role === 'speaker' && !room) {
@@ -796,7 +851,10 @@ function App() {
             : 'Copy Speaker Link'}
         </button>{' '}
 
-        <button type="button" onClick={leave}>
+        <button
+          type="button"
+          onClick={endConversation}
+        >
           End Conversation
         </button>
       </main>
