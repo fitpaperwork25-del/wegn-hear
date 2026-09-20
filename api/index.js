@@ -1,5 +1,4 @@
 import express from 'express'
-import cors from 'cors'
 import {
   AccessToken,
   RoomServiceClient,
@@ -7,10 +6,11 @@ import {
 
 const app = express()
 
-app.use(cors())
 app.use(express.json())
 
 const livekitUrl = process.env.VITE_LIVEKIT_URL
+const apiKey = process.env.LIVEKIT_API_KEY
+const apiSecret = process.env.LIVEKIT_API_SECRET
 
 const livekitHttpUrl = livekitUrl
   ?.replace('wss://', 'https://')
@@ -18,19 +18,33 @@ const livekitHttpUrl = livekitUrl
 
 const roomService = new RoomServiceClient(
   livekitHttpUrl,
-  process.env.LIVEKIT_API_KEY,
-  process.env.LIVEKIT_API_SECRET
+  apiKey,
+  apiSecret
 )
 
-app.get('/api/token', async (req, res) => {
+// Vercel exposes this function at /api/index.
+// GET /api/index creates a LiveKit participant token.
+app.get('/api/index', async (req, res) => {
   try {
-    const room = req.query.room || 'wegn-hear-test'
+    if (!apiKey || !apiSecret || !livekitUrl) {
+      return res.status(500).json({
+        error: 'LiveKit environment variables are missing',
+      })
+    }
+
+    const room =
+      typeof req.query.room === 'string'
+        ? req.query.room
+        : 'wegn-hear-test'
+
     const identity =
-      req.query.identity || `listener-${Date.now()}`
+      typeof req.query.identity === 'string'
+        ? req.query.identity
+        : `listener-${Date.now()}`
 
     const token = new AccessToken(
-      process.env.LIVEKIT_API_KEY,
-      process.env.LIVEKIT_API_SECRET,
+      apiKey,
+      apiSecret,
       { identity }
     )
 
@@ -55,9 +69,17 @@ app.get('/api/token', async (req, res) => {
   }
 })
 
-app.post('/api/end-room', async (req, res) => {
+// POST /api/index with { action: 'end-room', room: '...' }
+// ends the LiveKit conversation.
+app.post('/api/index', async (req, res) => {
   try {
-    const { room } = req.body
+    const { action, room } = req.body ?? {}
+
+    if (action !== 'end-room') {
+      return res.status(400).json({
+        error: 'Invalid action',
+      })
+    }
 
     if (
       typeof room !== 'string' ||
