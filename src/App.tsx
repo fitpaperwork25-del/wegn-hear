@@ -5,6 +5,7 @@ import {
   Track,
   RemoteAudioTrack,
   RemoteParticipant,
+  LocalAudioTrack,
   DisconnectReason,
   createLocalAudioTrack,
 } from 'livekit-client'
@@ -40,6 +41,8 @@ function App() {
 
   const [conversationId, setConversationId] = useState('')
   const [speakerName, setSpeakerName] = useState('')
+  const [microphoneMuted, setMicrophoneMuted] =
+    useState(false)
   const [speakers, setSpeakers] = useState<SpeakerInfo[]>([])
 
   const [mode, setMode] =
@@ -69,6 +72,9 @@ function App() {
 
   const audioElements = useRef<Map<string, HTMLAudioElement>>(
     new Map()
+  )
+  const microphoneTrackRef = useRef<LocalAudioTrack | null>(
+    null
   )
 
   const modeRef = useRef<'auto' | 'focus'>('auto')
@@ -486,8 +492,11 @@ function App() {
         }
       )
 
+      microphoneTrackRef.current = microphoneTrack
+
       setRoom(newRoom)
       setRole('speaker')
+      setMicrophoneMuted(false)
 
       setStatus(`${cleanName} — microphone live ✓`)
     } catch (error) {
@@ -595,6 +604,7 @@ function App() {
     autoSpeakerRef.current = null
     speakerVolumesRef.current = {}
     mutedSpeakersRef.current = {}
+    microphoneTrackRef.current = null
 
     setRoom(null)
     setRole(null)
@@ -607,6 +617,7 @@ function App() {
     setMutedSpeakers({})
     setConversationId('')
     setSpeakerName('')
+    setMicrophoneMuted(false)
     setCopied(false)
     setConversationEnded(false)
     setStatus('Start a conversation')
@@ -617,6 +628,23 @@ function App() {
   async function leave() {
     await room?.disconnect()
     resetLocalConversation()
+  }
+
+  async function toggleMicrophone() {
+    const track = microphoneTrackRef.current
+
+    if (!track) {
+      return
+    }
+
+    if (microphoneMuted) {
+      await track.unmute()
+      setMicrophoneMuted(false)
+      return
+    }
+
+    await track.mute()
+    setMicrophoneMuted(true)
   }
 
   async function endConversation() {
@@ -719,6 +747,15 @@ function App() {
         <p>HD Audio</p>
 
         <p>{status}</p>
+
+        <button
+          type="button"
+          onClick={toggleMicrophone}
+        >
+          {microphoneMuted
+            ? 'Unmute My Microphone'
+            : 'Mute My Microphone'}
+        </button>
 
         <button type="button" onClick={leave}>
           Leave Conversation
