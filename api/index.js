@@ -1,4 +1,5 @@
 import express from 'express'
+
 import {
   AccessToken,
   RoomServiceClient,
@@ -22,7 +23,6 @@ const roomService = new RoomServiceClient(
   apiSecret
 )
 
-// Vercel exposes this function at /api/index.
 // GET /api/index creates a LiveKit participant token.
 app.get('/api/index', async (req, res) => {
   try {
@@ -69,11 +69,17 @@ app.get('/api/index', async (req, res) => {
   }
 })
 
-// POST /api/index with { action: 'end-room', room: '...' }
-// ends the LiveKit conversation.
+// POST /api/index?action=end-room
+// Body: { room: '...' }
+// Ends the LiveKit conversation.
 app.post('/api/index', async (req, res) => {
   try {
-    const { action, room } = req.body ?? {}
+    const action =
+      typeof req.query.action === 'string'
+        ? req.query.action
+        : req.body?.action
+
+    const room = req.body?.room
 
     if (action !== 'end-room') {
       return res.status(400).json({
@@ -87,6 +93,12 @@ app.post('/api/index', async (req, res) => {
     ) {
       return res.status(400).json({
         error: 'Invalid room',
+      })
+    }
+
+    if (!apiKey || !apiSecret || !livekitHttpUrl) {
+      return res.status(500).json({
+        error: 'LiveKit environment variables are missing',
       })
     }
 
