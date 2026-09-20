@@ -11,6 +11,7 @@ function App() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [speakerConversationId, setSpeakerConversationId] =
     useState<string | null>(null)
+  const [speakerName, setSpeakerName] = useState('')
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -86,12 +87,19 @@ function App() {
       return
     }
 
+    const name = speakerName.trim()
+
+    if (!name) {
+      setStatus('Enter your name before joining')
+      return
+    }
+
     try {
       setStatus('Connecting speaker...')
 
       const token = await getToken(
         speakerConversationId,
-        `speaker-${Date.now()}`
+        `speaker-${name}-${Date.now()}`
       )
 
       const newRoom = new Room()
@@ -99,16 +107,14 @@ function App() {
       await newRoom.connect(LIVEKIT_URL, token)
 
       /*
-       * IMPORTANT:
-       * This preserves Audio Baseline 1.
-       * Do not replace this microphone path while building
-       * the conversation and invitation system.
+       * Audio Baseline 1:
+       * Keep the known-good microphone path unchanged.
        */
       await newRoom.localParticipant.setMicrophoneEnabled(true)
 
       setRoom(newRoom)
 
-      setStatus('Connected — microphone live ✓')
+      setStatus(`${name} — microphone live ✓`)
     } catch (error) {
       console.error(error)
       setStatus('Could not join conversation')
@@ -166,9 +172,21 @@ function App() {
           <>
             <h2>You've been invited to speak</h2>
 
-            <p>Join the conversation and allow microphone access.</p>
+            <p>Enter your name, then join the conversation.</p>
 
-            <button type="button" onClick={joinAsSpeaker}>
+            <input
+              type="text"
+              value={speakerName}
+              onChange={(event) => setSpeakerName(event.target.value)}
+              placeholder="Your name"
+              autoComplete="name"
+            />
+
+            <button
+              type="button"
+              onClick={joinAsSpeaker}
+              disabled={!speakerName.trim()}
+            >
               Join Conversation
             </button>
 
