@@ -13,10 +13,15 @@ import './App.css'
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
 
-const TOKEN_SERVER =
-  window.location.hostname === 'localhost'
-    ? 'http://localhost:3001'
-    : '/api/index'
+const IS_LOCAL = window.location.hostname === 'localhost'
+
+const TOKEN_ENDPOINT = IS_LOCAL
+  ? 'http://localhost:3001/token'
+  : '/api/index?action=token'
+
+const END_ROOM_ENDPOINT = IS_LOCAL
+  ? 'http://localhost:3001/end-room'
+  : '/api/index?action=end-room'
 
 const ROOM_PREFIX = 'wegn-hear-'
 const AUTO_HOLD_MS = 800
@@ -110,8 +115,10 @@ function App() {
     roomName: string,
     identity: string
   ) {
+    const separator = TOKEN_ENDPOINT.includes('?') ? '&' : '?'
+
     const response = await fetch(
-      `${TOKEN_SERVER}/token?room=${encodeURIComponent(
+      `${TOKEN_ENDPOINT}${separator}room=${encodeURIComponent(
         roomName
       )}&identity=${encodeURIComponent(identity)}`
     )
@@ -623,7 +630,7 @@ function App() {
       const roomName = `${ROOM_PREFIX}${conversationId}`
 
       const response = await fetch(
-        `${TOKEN_SERVER}/end-room`,
+        END_ROOM_ENDPOINT,
         {
           method: 'POST',
           headers: {
