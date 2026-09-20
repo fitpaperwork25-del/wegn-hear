@@ -14,7 +14,9 @@ import './App.css'
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
 
 const TOKEN_SERVER =
-  `http://${window.location.hostname}:3001`
+  window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'
+    : '/api/index'
 
 const ROOM_PREFIX = 'wegn-hear-'
 const AUTO_HOLD_MS = 800
