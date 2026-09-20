@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Room, RoomEvent, Track } from 'livekit-client'
+import {
+  Participant,
+  Room,
+  RoomEvent,
+  Track,
+} from 'livekit-client'
 
 import './App.css'
 
@@ -12,6 +17,7 @@ function App() {
   const [speakerConversationId, setSpeakerConversationId] =
     useState<string | null>(null)
   const [speakerName, setSpeakerName] = useState('')
+  const [connectedSpeakers, setConnectedSpeakers] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -47,6 +53,51 @@ function App() {
     return `${window.location.origin}?join=${encodeURIComponent(id)}`
   }
 
+  function getSpeakerDisplayName(participant: Participant) {
+    const identity = participant.identity
+
+    if (!identity.startsWith('speaker-')) {
+      return null
+    }
+
+    const withoutPrefix = identity.slice('speaker-'.length)
+    const lastDash = withoutPrefix.lastIndexOf('-')
+
+    if (lastDash === -1) {
+      return withoutPrefix
+    }
+
+    return withoutPrefix.slice(0, lastDash)
+  }
+
+  function addSpeaker(participant: Participant) {
+    const name = getSpeakerDisplayName(participant)
+
+    if (!name) {
+      return
+    }
+
+    setConnectedSpeakers((current) => {
+      if (current.includes(name)) {
+        return current
+      }
+
+      return [...current, name]
+    })
+  }
+
+  function removeSpeaker(participant: Participant) {
+    const name = getSpeakerDisplayName(participant)
+
+    if (!name) {
+      return
+    }
+
+    setConnectedSpeakers((current) =>
+      current.filter((speaker) => speaker !== name)
+    )
+  }
+
   async function startConversation() {
     try {
       setStatus('Starting conversation...')
@@ -60,6 +111,14 @@ function App() {
 
       const newRoom = new Room()
 
+      newRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+        addSpeaker(participant)
+      })
+
+      newRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        removeSpeaker(participant)
+      })
+
       newRoom.on(RoomEvent.TrackSubscribed, (track) => {
         if (track.kind === Track.Kind.Audio) {
           const element = track.attach()
@@ -72,10 +131,18 @@ function App() {
 
       await newRoom.startAudio()
 
+      /*
+       * Include any speakers that were already in the room
+       * by the time the listener finished connecting.
+       */
+      newRoom.remoteParticipants.forEach((participant) => {
+        addSpeaker(participant)
+      })
+
       setConversationId(newConversationId)
       setRoom(newRoom)
 
-      setStatus('Conversation live — waiting for speaker ✓')
+      setStatus('Conversation live ✓')
     } catch (error) {
       console.error(error)
       setStatus('Could not start conversation')
@@ -107,8 +174,8 @@ function App() {
       await newRoom.connect(LIVEKIT_URL, token)
 
       /*
-       * Audio Baseline 1:
-       * Keep the known-good microphone path unchanged.
+       * Audio Baseline 1.
+       * Keep this known-good microphone path unchanged.
        */
       await newRoom.localParticipant.setMicrophoneEnabled(true)
 
@@ -151,6 +218,7 @@ function App() {
 
     setRoom(null)
     setConversationId(null)
+    setConnectedSpeakers([])
 
     if (speakerConversationId) {
       setStatus('Ready to join conversation')
@@ -212,6 +280,18 @@ function App() {
       ) : (
         <>
           <p>{status}</p>
+
+          <h2>Connected Speakers</h2>
+
+          {connectedSpeakers.length === 0 ? (
+            <p>Waiting for speakers...</p>
+          ) : (
+            <ul>
+              {connectedSpeakers.map((speaker) => (
+                <li key={speaker}>{speaker}</li>
+              ))}
+            </ul>
+          )}
 
           <h2>Invite a speaker</h2>
 
