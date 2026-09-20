@@ -637,6 +637,7 @@ function App() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
+          action: 'end-room',
             room: roomName,
           }),
         }
