@@ -10,6 +10,11 @@ import './App.css'
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL
 
+type Speaker = {
+  identity: string
+  name: string
+}
+
 function App() {
   const [status, setStatus] = useState('Start a conversation')
   const [room, setRoom] = useState<Room | null>(null)
@@ -17,7 +22,8 @@ function App() {
   const [speakerConversationId, setSpeakerConversationId] =
     useState<string | null>(null)
   const [speakerName, setSpeakerName] = useState('')
-  const [connectedSpeakers, setConnectedSpeakers] = useState<string[]>([])
+  const [connectedSpeakers, setConnectedSpeakers] = useState<Speaker[]>([])
+  const [focusedSpeaker, setFocusedSpeaker] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -78,24 +84,65 @@ function App() {
     }
 
     setConnectedSpeakers((current) => {
-      if (current.includes(name)) {
+      if (current.some((speaker) => speaker.identity === participant.identity)) {
         return current
       }
 
-      return [...current, name]
+      return [
+        ...current,
+        {
+          identity: participant.identity,
+          name,
+        },
+      ]
     })
   }
 
   function removeSpeaker(participant: Participant) {
-    const name = getSpeakerDisplayName(participant)
+    setConnectedSpeakers((current) =>
+      current.filter(
+        (speaker) => speaker.identity !== participant.identity
+      )
+    )
 
-    if (!name) {
+    setFocusedSpeaker((current) =>
+      current === participant.identity ? null : current
+    )
+  }
+
+  function applyFocusMode(
+    currentRoom: Room,
+    speakerIdentity: string | null
+  ) {
+    currentRoom.remoteParticipants.forEach((participant) => {
+      participant.audioTrackPublications.forEach((publication) => {
+        const audioElement = publication.track?.attachedElements[0]
+
+        if (!audioElement) {
+          return
+        }
+
+        if (speakerIdentity === null) {
+          audioElement.volume = 1
+          return
+        }
+
+        audioElement.volume =
+          participant.identity === speakerIdentity ? 1 : 0
+      })
+    })
+  }
+
+  function selectSpeaker(identity: string) {
+    if (!room) {
       return
     }
 
-    setConnectedSpeakers((current) =>
-      current.filter((speaker) => speaker !== name)
-    )
+    const nextFocus =
+      focusedSpeaker === identity ? null : identity
+
+    setFocusedSpeaker(nextFocus)
+    applyFocusMode(room, nextFocus)
   }
 
   async function startConversation() {
@@ -122,7 +169,10 @@ function App() {
       newRoom.on(RoomEvent.TrackSubscribed, (track) => {
         if (track.kind === Track.Kind.Audio) {
           const element = track.attach()
+
           element.autoplay = true
+          element.volume = 1
+
           document.body.appendChild(element)
         }
       })
@@ -131,10 +181,6 @@ function App() {
 
       await newRoom.startAudio()
 
-      /*
-       * Include any speakers that were already in the room
-       * by the time the listener finished connecting.
-       */
       newRoom.remoteParticipants.forEach((participant) => {
         addSpeaker(participant)
       })
@@ -219,6 +265,7 @@ function App() {
     setRoom(null)
     setConversationId(null)
     setConnectedSpeakers([])
+    setFocusedSpeaker(null)
 
     if (speakerConversationId) {
       setStatus('Ready to join conversation')
@@ -288,9 +335,32 @@ function App() {
           ) : (
             <ul>
               {connectedSpeakers.map((speaker) => (
-                <li key={speaker}>{speaker}</li>
+                <li key={speaker.identity}>
+                  {speaker.name}{' '}
+
+                  <button
+                    type="button"
+                    onClick={() => selectSpeaker(speaker.identity)}
+                  >
+                    {focusedSpeaker === speaker.identity
+                      ? 'Focused ✓'
+                      : 'Focus'}
+                  </button>
+                </li>
               ))}
             </ul>
+          )}
+
+          {focusedSpeaker && (
+            <button
+              type="button"
+              onClick={() => {
+                setFocusedSpeaker(null)
+                applyFocusMode(room, null)
+              }}
+            >
+              Auto — Hear Everyone
+            </button>
           )}
 
           <h2>Invite a speaker</h2>
