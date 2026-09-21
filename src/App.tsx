@@ -638,12 +638,12 @@ function App() {
     }
 
     if (microphoneMuted) {
-      await track.unmute()
+      await track.resumeUpstream()
       setMicrophoneMuted(false)
       return
     }
 
-    await track.mute()
+    await track.pauseUpstream()
     setMicrophoneMuted(true)
   }
 
