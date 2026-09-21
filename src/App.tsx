@@ -805,26 +805,71 @@ function App() {
 
   if (role === 'listener' && room) {
     return (
-      <main>
-        <h1>WEGN Hear</h1>
+      <main className="listener-view">
+        <div className="listener-shell">
+          <header className="listener-header">
+            <div className="brand-lockup">
+              <span className="brand-mark" aria-hidden="true">
+                W
+              </span>
+              <div>
+                <h1>WEGN Hear</h1>
+                <p className="brand-subtitle">HD Audio</p>
+              </div>
+            </div>
 
-        <p>HD Audio</p>
+            <div className="connection-status" role="status">
+              <span className="status-dot" aria-hidden="true" />
+              <span>{status}</span>
+            </div>
+          </header>
 
-        <p>{status}</p>
+          <section className="mode-panel" aria-labelledby="mode-title">
+            <div className="section-heading">
+              <div>
+                <p className="section-kicker">LISTENING MODE</p>
+                <h2 id="mode-title">Choose how you listen</h2>
+              </div>
+              <strong className="mode-badge">
+                {mode === 'auto' ? 'Auto' : 'Focus'}
+              </strong>
+            </div>
 
-        <p>
-          Mode:{' '}
-          <strong>
-            {mode === 'auto' ? 'Auto' : 'Focus'}
-          </strong>
-        </p>
+            {speakers.length > 0 && (
+              <button
+                className="mode-button"
+                type="button"
+                onClick={autoMode}
+                disabled={mode === 'auto'}
+              >
+                <span className="mode-button-icon" aria-hidden="true">
+                  ◉
+                </span>
+                {mode === 'auto'
+                  ? 'Auto Mode ✓'
+                  : 'Return to Auto'}
+              </button>
+            )}
+          </section>
 
-        <h2>Connected Speakers</h2>
+          <section className="speakers-section" aria-labelledby="speakers-title">
+            <div className="section-heading speakers-heading">
+              <div>
+                <p className="section-kicker">LIVE CHANNELS</p>
+                <h2 id="speakers-title">Connected Speakers</h2>
+              </div>
+              <span className="speaker-count">
+                {speakers.length.toString().padStart(2, '0')}
+              </span>
+            </div>
 
-        {speakers.length === 0 ? (
-          <p>Waiting for speakers...</p>
-        ) : (
-          <ul>
+            {speakers.length === 0 ? (
+              <div className="empty-speakers">
+                <span className="empty-icon" aria-hidden="true">◌</span>
+                <p>Waiting for speakers...</p>
+              </div>
+            ) : (
+              <ul className="speaker-list">
             {speakers.map((speaker) => {
               const volume =
                 speakerVolumes[speaker.identity] ?? 100
@@ -844,105 +889,129 @@ function App() {
                 activeSpeakers.has(speaker.identity)
 
               return (
-                <li key={speaker.identity}>
-                  <strong>{speaker.name}</strong>{' '}
+                <li
+                  className={`speaker-card${
+                    isSpeaking ? ' is-speaking' : ''
+                  }${
+                    isFocused || isAutoSelected
+                      ? ' is-selected'
+                      : ''
+                  }`}
+                  key={speaker.identity}
+                >
+                  <div className="speaker-card-topline">
+                    <div className="speaker-identity">
+                      <span className="speaker-avatar" aria-hidden="true">
+                        {speaker.name.charAt(0).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{speaker.name}</strong>
+                        <div className="speaker-state">
+                          {isSpeaking ? (
+                            <span className="speaking-state">
+                              <span className="signal-bars" aria-hidden="true" />
+                              Speaking now
+                            </span>
+                          ) : (
+                            'Connected'
+                          )}
+                        </div>
+                      </div>
+                    </div>
 
-                  {isSpeaking && (
-                    <>
-                      <strong>Speaking ●</strong>{' '}
-                    </>
-                  )}
+                    {(isFocused || isAutoSelected) && (
+                      <span className="selection-badge">
+                        {isFocused ? 'Focused ✓' : 'Auto ✓'}
+                      </span>
+                    )}
+                  </div>
 
-                  {isAutoSelected && (
-                    <>
-                      <strong>Auto ✓</strong>{' '}
-                    </>
-                  )}
+                  <div className="speaker-card-controls">
+                    <button
+                      className={`focus-button${
+                        isFocused ? ' is-active' : ''
+                      }`}
+                      type="button"
+                      onClick={() =>
+                        focusSpeaker(speaker.identity)
+                      }
+                    >
+                      {isFocused ? 'Focused ✓' : 'Focus'}
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      focusSpeaker(speaker.identity)
-                    }
-                  >
-                    {isFocused
-                      ? 'Focused ✓'
-                      : 'Focus'}
-                  </button>{' '}
+                    <button
+                      className={`mute-button${
+                        isMuted ? ' is-muted' : ''
+                      }`}
+                      type="button"
+                      onClick={() =>
+                        toggleSpeakerMute(speaker.identity)
+                      }
+                    >
+                      {isMuted ? 'Unmute' : 'Mute'}
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      toggleSpeakerMute(speaker.identity)
-                    }
-                  >
-                    {isMuted ? 'Unmute' : 'Mute'}
-                  </button>{' '}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      changeSpeakerVolume(
-                        speaker.identity,
-                        -10
-                      )
-                    }
-                  >
-                    −
-                  </button>{' '}
-
-                  {volume}%{' '}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      changeSpeakerVolume(
-                        speaker.identity,
-                        10
-                      )
-                    }
-                  >
-                    +
-                  </button>
+                    <div className="volume-control">
+                      <button
+                        className="volume-button"
+                        type="button"
+                        aria-label={`Decrease ${speaker.name} volume`}
+                        onClick={() =>
+                          changeSpeakerVolume(
+                            speaker.identity,
+                            -10
+                          )
+                        }
+                      >
+                        −
+                      </button>
+                      <span className="volume-value">{volume}%</span>
+                      <button
+                        className="volume-button"
+                        type="button"
+                        aria-label={`Increase ${speaker.name} volume`}
+                        onClick={() =>
+                          changeSpeakerVolume(
+                            speaker.identity,
+                            10
+                          )
+                        }
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
                 </li>
               )
             })}
-          </ul>
-        )}
+              </ul>
+            )}
+          </section>
 
-        {speakers.length > 0 && (
+          <section className="invite-panel" aria-labelledby="invite-title">
+            <div>
+              <p className="section-kicker">GROW THE ROOM</p>
+              <h2 id="invite-title">Invite a speaker</h2>
+              <p>Send a private link to anyone you want to hear.</p>
+            </div>
+            <button
+              className="invite-button"
+              type="button"
+              onClick={copySpeakerLink}
+            >
+              <span aria-hidden="true">＋</span>
+              {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
+            </button>
+          </section>
+
           <button
+            className="end-button"
             type="button"
-            onClick={autoMode}
-            disabled={mode === 'auto'}
+            onClick={endConversation}
           >
-            {mode === 'auto'
-              ? 'Auto Mode ✓'
-              : 'Return to Auto'}
+            End Conversation
           </button>
-        )}
-
-        <h2>Invite a speaker</h2>
-
-        <p>
-          Send this link to anyone you want to hear.
-        </p>
-
-        <button
-          type="button"
-          onClick={copySpeakerLink}
-        >
-          {copied
-            ? 'Link Copied ✓'
-            : 'Copy Speaker Link'}
-        </button>{' '}
-
-        <button
-          type="button"
-          onClick={endConversation}
-        >
-          End Conversation
-        </button>
+        </div>
       </main>
     )
   }
