@@ -945,3 +945,17 @@
     margin-bottom: 64px;
   }
 }
+
+@media (max-width: 639px) {
+  .invite-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .invite-panel .invite-button,
+  .invite-panel .qr-button {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+}
