@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import QRCode from 'qrcode'
 import {
   Room,
   RoomEvent,
@@ -67,6 +68,8 @@ function App() {
   >({})
 
   const [copied, setCopied] = useState(false)
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
+  const [showQrCode, setShowQrCode] = useState(false)
 
   const [conversationEnded, setConversationEnded] =
     useState(false)
@@ -542,15 +545,22 @@ function App() {
     }
   }
 
-  async function copySpeakerLink() {
+  function getSpeakerLink() {
     if (!conversationId) {
-      return
+      return ''
     }
 
-    const link =
-      `${window.location.origin}/?join=${encodeURIComponent(
+    return `${window.location.origin}/?join=${encodeURIComponent(
         conversationId
       )}`
+  }
+
+  async function copySpeakerLink() {
+    const link = getSpeakerLink()
+
+    if (!link) {
+      return
+    }
 
     await navigator.clipboard.writeText(link)
 
@@ -559,6 +569,23 @@ function App() {
     window.setTimeout(() => {
       setCopied(false)
     }, 2000)
+  }
+
+  async function openQrCode() {
+    const link = getSpeakerLink()
+
+    if (!link) {
+      return
+    }
+
+    const dataUrl = await QRCode.toDataURL(link, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 320,
+    })
+
+    setQrCodeDataUrl(dataUrl)
+    setShowQrCode(true)
   }
 
   function focusSpeaker(identity: string) {
@@ -658,6 +685,8 @@ function App() {
     setSpeakerName('')
     setMicrophoneMuted(false)
     setCopied(false)
+    setQrCodeDataUrl('')
+    setShowQrCode(false)
     setConversationEnded(false)
     setStatus('Start a conversation')
 
@@ -723,82 +752,143 @@ function App() {
 
   if (role === 'speaker' && conversationEnded) {
     return (
-      <main>
-        <h1>WEGN Hear</h1>
-
-        <p>HD Audio</p>
-
-        <h2>Conversation ended</h2>
-
-        <p>The listener ended this conversation.</p>
+      <main className="speaker-view speaker-ended-view">
+        <div className="speaker-shell speaker-ended-shell">
+          <img
+            className="official-logo"
+            src="/images/logo.png"
+            alt="WEGN"
+          />
+          <p className="product-label">WEGN Hear</p>
+          <p className="product-audio-label">HD Audio</p>
+          <div className="speaker-ended-mark" aria-hidden="true">
+            ✓
+          </div>
+          <h1>Conversation ended</h1>
+          <p className="speaker-message">
+            The listener ended this conversation.
+          </p>
+        </div>
       </main>
     )
   }
 
   if (role === 'speaker' && !room) {
     return (
-      <main>
-        <h1>WEGN Hear</h1>
+      <main className="speaker-view speaker-join-view">
+        <div className="speaker-shell">
+          <header className="speaker-branding">
+            <img
+              className="official-logo"
+              src="/images/logo.png"
+              alt="WEGN"
+            />
+            <div>
+              <p className="product-label">WEGN Hear</p>
+              <p className="product-audio-label">HD Audio</p>
+            </div>
+          </header>
 
-        <p>HD Audio</p>
+          <section className="speaker-card speaker-intro-card">
+            <p className="speaker-kicker">PRIVATE INVITATION</p>
+            <h1>You've been invited to speak.</h1>
+            <p className="speaker-message">
+              Your voice will be sent directly to the listener in this conversation.
+            </p>
 
-        <h2>You've been invited to speak</h2>
+            <label className="speaker-name-label" htmlFor="speaker-name">
+              Your name
+            </label>
+            <input
+              id="speaker-name"
+              className="speaker-name-input"
+              type="text"
+              placeholder="Enter your name"
+              value={speakerName}
+              onChange={(event) =>
+                setSpeakerName(event.target.value)
+              }
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Enter' &&
+                  speakerName.trim()
+                ) {
+                  joinConversation()
+                }
+              }}
+            />
 
-        <p>
-          Enter your name, then join the conversation.
-        </p>
+            <button
+              className="speaker-primary-button"
+              type="button"
+              onClick={joinConversation}
+              disabled={!speakerName.trim()}
+            >
+              Join Conversation
+            </button>
 
-        <input
-          type="text"
-          placeholder="Your name"
-          value={speakerName}
-          onChange={(event) =>
-            setSpeakerName(event.target.value)
-          }
-          onKeyDown={(event) => {
-            if (
-              event.key === 'Enter' &&
-              speakerName.trim()
-            ) {
-              joinConversation()
-            }
-          }}
-        />
-
-        <button
-          type="button"
-          onClick={joinConversation}
-          disabled={!speakerName.trim()}
-        >
-          Join Conversation
-        </button>
-
-        <p>{status}</p>
+            <p className="speaker-status">{status}</p>
+          </section>
+        </div>
       </main>
     )
   }
 
   if (role === 'speaker' && room) {
     return (
-      <main>
-        <h1>WEGN Hear</h1>
+      <main className="speaker-view speaker-live-view">
+        <div className="speaker-shell">
+          <header className="speaker-branding">
+            <img
+              className="official-logo"
+              src="/images/logo.png"
+              alt="WEGN"
+            />
+            <div>
+              <p className="product-label">WEGN Hear</p>
+              <p className="product-audio-label">HD Audio</p>
+            </div>
+          </header>
 
-        <p>HD Audio</p>
+          <section className={`speaker-card speaker-live-card${
+            microphoneMuted ? ' is-muted' : ''
+          }`}>
+            <div className="live-status-row">
+              <span className="live-status-dot" aria-hidden="true" />
+              <span>{microphoneMuted ? 'Microphone muted' : 'Microphone live'}</span>
+            </div>
+            <p className="speaker-kicker">YOU ARE SPEAKING AS</p>
+            <h1>{speakerName}</h1>
+            <p className="speaker-message">
+              {microphoneMuted
+                ? 'Your microphone is muted. Unmute when you are ready to continue.'
+                : 'The listener can hear you now.'}
+            </p>
 
-        <p>{status}</p>
+            <button
+              className="speaker-microphone-button"
+              type="button"
+              onClick={toggleMicrophone}
+            >
+              <span className="microphone-icon" aria-hidden="true">
+                {microphoneMuted ? '○' : '●'}
+              </span>
+              {microphoneMuted
+                ? 'Unmute My Microphone'
+                : 'Mute My Microphone'}
+            </button>
+          </section>
 
-        <button
-          type="button"
-          onClick={toggleMicrophone}
-        >
-          {microphoneMuted
-            ? 'Unmute My Microphone'
-            : 'Mute My Microphone'}
-        </button>
+          <p className="speaker-live-status">{status}</p>
 
-        <button type="button" onClick={leave}>
-          Leave Conversation
-        </button>
+          <button
+            className="speaker-leave-button"
+            type="button"
+            onClick={leave}
+          >
+            Leave Conversation
+          </button>
+        </div>
       </main>
     )
   }
@@ -809,9 +899,11 @@ function App() {
         <div className="listener-shell">
           <header className="listener-header">
             <div className="brand-lockup">
-              <span className="brand-mark" aria-hidden="true">
-                W
-              </span>
+              <img
+                className="listener-logo"
+                src="/images/logo.png"
+                alt="WEGN"
+              />
               <div>
                 <h1>WEGN Hear</h1>
                 <p className="brand-subtitle">HD Audio</p>
@@ -1002,6 +1094,14 @@ function App() {
               <span aria-hidden="true">＋</span>
               {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
             </button>
+            <button
+              className="qr-button"
+              type="button"
+              onClick={openQrCode}
+            >
+              <span aria-hidden="true">▦</span>
+              Show QR Code
+            </button>
           </section>
 
           <button
@@ -1012,6 +1112,49 @@ function App() {
             End Conversation
           </button>
         </div>
+
+        {showQrCode && qrCodeDataUrl && (
+          <div
+            className="qr-modal-backdrop"
+            role="presentation"
+            onClick={() => setShowQrCode(false)}
+          >
+            <section
+              className="qr-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="qr-modal-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                className="qr-close-button"
+                type="button"
+                aria-label="Close QR code"
+                onClick={() => setShowQrCode(false)}
+              >
+                ×
+              </button>
+              <p className="section-kicker">SPEAKER INVITATION</p>
+              <h2 id="qr-modal-title">Scan to join</h2>
+              <p className="qr-supporting-text">
+                Scan this code to join the conversation as a speaker.
+              </p>
+              <div className="qr-code-frame">
+                <img
+                  src={qrCodeDataUrl}
+                  alt="QR code for joining this conversation as a speaker"
+                />
+              </div>
+              <button
+                className="qr-modal-close-action"
+                type="button"
+                onClick={() => setShowQrCode(false)}
+              >
+                Close
+              </button>
+            </section>
+          </div>
+        )}
       </main>
     )
   }
