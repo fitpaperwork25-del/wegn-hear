@@ -26,6 +26,7 @@ const END_ROOM_ENDPOINT = IS_LOCAL
 
 const ROOM_PREFIX = 'wegn-hear-'
 const AUTO_HOLD_MS = 800
+const LISTENER_GAIN = 1.25
 
 type SpeakerInfo = {
   identity: string
@@ -72,6 +73,19 @@ function App() {
 
   const audioElements = useRef<Map<string, HTMLAudioElement>>(
     new Map()
+  )
+  const audioNodes = useRef<
+    Map<
+      string,
+      {
+        track: RemoteAudioTrack
+        source: MediaElementAudioSourceNode
+        gain: GainNode
+      }
+    >
+  >(new Map())
+  const listenerAudioContext = useRef<AudioContext | null>(
+    null
   )
   const microphoneTrackRef = useRef<LocalAudioTrack | null>(
     null
@@ -235,25 +249,55 @@ function App() {
     )
   }
 
+  function removeAudioTrack(identity: string) {
+    const element = audioElements.current.get(identity)
+    const nodes = audioNodes.current.get(identity)
+
+    if (nodes && element) {
+      nodes.track.detach(element)
+      nodes.source.disconnect()
+      nodes.gain.disconnect()
+      audioNodes.current.delete(identity)
+    }
+
+    if (element) {
+      element.remove()
+      audioElements.current.delete(identity)
+    }
+  }
+
   function attachAudioTrack(
     track: RemoteAudioTrack,
     participant: RemoteParticipant
   ) {
     const identity = participant.identity
-    const existing = audioElements.current.get(identity)
-
-    if (existing) {
-      existing.remove()
-      audioElements.current.delete(identity)
-    }
+    removeAudioTrack(identity)
 
     const element = track.attach()
 
     element.autoplay = true
     element.setAttribute('playsinline', 'true')
 
+    const audioContext =
+      listenerAudioContext.current ??
+      (listenerAudioContext.current = new AudioContext())
+    const source = audioContext.createMediaElementSource(
+      element
+    )
+    const gain = audioContext.createGain()
+
+    gain.gain.value = LISTENER_GAIN
+    source.connect(gain)
+    gain.connect(audioContext.destination)
+    void audioContext.resume()
+
     document.body.appendChild(element)
     audioElements.current.set(identity, element)
+    audioNodes.current.set(identity, {
+      track,
+      source,
+      gain,
+    })
 
     setSpeakerVolumes((currentVolumes) => {
       const nextVolumes = {
@@ -381,14 +425,7 @@ function App() {
       newRoom.on(
         RoomEvent.ParticipantDisconnected,
         (participant) => {
-          const element = audioElements.current.get(
-            participant.identity
-          )
-
-          if (element) {
-            element.remove()
-            audioElements.current.delete(participant.identity)
-          }
+          removeAudioTrack(participant.identity)
 
           updateSpeakerList(newRoom)
 
@@ -477,7 +514,7 @@ function App() {
       await newRoom.connect(LIVEKIT_URL, token)
 
       const microphoneTrack = await createLocalAudioTrack({
-        echoCancellation: true,
+        echoCancellation: false,
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
@@ -488,7 +525,7 @@ function App() {
         {
           source: Track.Source.Microphone,
           dtx: true,
-          red: true,
+          red: false,
         }
       )
 
@@ -593,11 +630,13 @@ function App() {
   function resetLocalConversation() {
     clearAutoHoldTimer()
 
-    audioElements.current.forEach((element) => {
-      element.remove()
+    audioElements.current.forEach((_element, identity) => {
+      removeAudioTrack(identity)
     })
 
-    audioElements.current.clear()
+    audioNodes.current.clear()
+    void listenerAudioContext.current?.close()
+    listenerAudioContext.current = null
 
     modeRef.current = 'auto'
     focusedSpeakerRef.current = null
