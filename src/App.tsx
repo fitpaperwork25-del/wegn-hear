@@ -1082,9 +1082,8 @@ function App() {
 
           <section className="invite-panel" aria-labelledby="invite-title">
             <div>
-              <p className="section-kicker">GROW THE ROOM</p>
-              <h2 id="invite-title">Invite a speaker</h2>
-              <p>Send a private link to anyone you want to hear.</p>
+              <h2 id="invite-title">INVITE A SPEAKER</h2>
+              <p>Share a private link to join.</p>
             </div>
             <button
               className="invite-button"
