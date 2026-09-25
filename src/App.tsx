@@ -27,7 +27,7 @@ const END_ROOM_ENDPOINT = IS_LOCAL
 
 const ROOM_PREFIX = 'wegn-hear-'
 const AUTO_HOLD_MS = 800
-const LISTENER_GAIN = 5.0
+const LISTENER_GAIN = 3.0
 
 type SpeakerInfo = {
   identity: string
@@ -84,7 +84,6 @@ function App() {
         track: RemoteAudioTrack
         source: MediaElementAudioSourceNode
         gain: GainNode
-        compressor: DynamicsCompressorNode
       }
     >
   >(new Map())
@@ -261,7 +260,6 @@ function App() {
       nodes.track.detach(element)
       nodes.source.disconnect()
       nodes.gain.disconnect()
-      nodes.compressor.disconnect()
       audioNodes.current.delete(identity)
     }
 
@@ -290,18 +288,10 @@ function App() {
       element
     )
     const gain = audioContext.createGain()
-    const compressor = audioContext.createDynamicsCompressor()
 
     gain.gain.value = LISTENER_GAIN
-    compressor.threshold.value = -24
-    compressor.knee.value = 12
-    compressor.ratio.value = 8
-    compressor.attack.value = 0.003
-    compressor.release.value = 0.25
-
     source.connect(gain)
-    gain.connect(compressor)
-    compressor.connect(audioContext.destination)
+    gain.connect(audioContext.destination)
     void audioContext.resume()
 
     document.body.appendChild(element)
@@ -310,7 +300,6 @@ function App() {
       track,
       source,
       gain,
-      compressor,
     })
 
     setSpeakerVolumes((currentVolumes) => {
@@ -478,7 +467,7 @@ function App() {
       setConversationId(id)
       setRoom(newRoom)
       setRole('listener')
-      setStatus('Conversation live âœ“')
+      setStatus('Conversation live ✓')
 
       updateSpeakerList(newRoom)
 
@@ -549,7 +538,7 @@ function App() {
       setRole('speaker')
       setMicrophoneMuted(false)
 
-      setStatus(`${cleanName} â€” microphone live âœ“`)
+      setStatus(`${cleanName} — microphone live ✓`)
     } catch (error) {
       console.error(error)
       setStatus('Could not join conversation')
@@ -773,7 +762,7 @@ function App() {
           <p className="product-label">WEGN Hear</p>
           <p className="product-audio-label">HD Audio</p>
           <div className="speaker-ended-mark" aria-hidden="true">
-            âœ“
+            ✓
           </div>
           <h1>Conversation ended</h1>
           <p className="speaker-message">
@@ -882,7 +871,7 @@ function App() {
               onClick={toggleMicrophone}
             >
               <span className="microphone-icon" aria-hidden="true">
-                {microphoneMuted ? 'â—‹' : 'â—'}
+                {microphoneMuted ? '○' : '●'}
               </span>
               {microphoneMuted
                 ? 'Unmute My Microphone'
@@ -946,10 +935,10 @@ function App() {
                 disabled={mode === 'auto'}
               >
                 <span className="mode-button-icon" aria-hidden="true">
-                  â—‰
+                  ◉
                 </span>
                 {mode === 'auto'
-                  ? 'Auto Mode âœ“'
+                  ? 'Auto Mode ✓'
                   : 'Return to Auto'}
               </button>
             )}
@@ -968,7 +957,7 @@ function App() {
 
             {speakers.length === 0 ? (
               <div className="empty-speakers">
-                <span className="empty-icon" aria-hidden="true">â—Œ</span>
+                <span className="empty-icon" aria-hidden="true">◌</span>
                 <p>Waiting for speakers...</p>
               </div>
             ) : (
@@ -1024,7 +1013,7 @@ function App() {
 
                     {(isFocused || isAutoSelected) && (
                       <span className="selection-badge">
-                        {isFocused ? 'Focused âœ“' : 'Auto âœ“'}
+                        {isFocused ? 'Focused ✓' : 'Auto ✓'}
                       </span>
                     )}
                   </div>
@@ -1039,7 +1028,7 @@ function App() {
                         focusSpeaker(speaker.identity)
                       }
                     >
-                      {isFocused ? 'Focused âœ“' : 'Focus'}
+                      {isFocused ? 'Focused ✓' : 'Focus'}
                     </button>
 
                     <button
@@ -1066,7 +1055,7 @@ function App() {
                           )
                         }
                       >
-                        âˆ’
+                        −
                       </button>
                       <span className="volume-value">{volume}%</span>
                       <button
@@ -1101,15 +1090,15 @@ function App() {
               type="button"
               onClick={copySpeakerLink}
             >
-              <span aria-hidden="true">ï¼‹</span>
-              {copied ? 'Link Copied âœ“' : 'Copy Speaker Link'}
+              <span aria-hidden="true">＋</span>
+              {copied ? 'Link Copied ✓' : 'Copy Speaker Link'}
             </button>
             <button
               className="qr-button"
               type="button"
               onClick={openQrCode}
             >
-              <span aria-hidden="true">â–¦</span>
+              <span aria-hidden="true">▦</span>
               Show QR Code
             </button>
           </section>
@@ -1142,7 +1131,7 @@ function App() {
                 aria-label="Close QR code"
                 onClick={() => setShowQrCode(false)}
               >
-                Ã—
+                ×
               </button>
               <p className="section-kicker">SPEAKER INVITATION</p>
               <h2 id="qr-modal-title">Scan to join</h2>
@@ -1188,3 +1177,5 @@ function App() {
 }
 
 export default App
+
+
