@@ -27,7 +27,7 @@ const END_ROOM_ENDPOINT = IS_LOCAL
 
 const ROOM_PREFIX = 'wegn-hear-'
 const AUTO_HOLD_MS = 800
-const LISTENER_GAIN = 2.0
+const LISTENER_GAIN = 3.0
 
 type SpeakerInfo = {
   identity: string
@@ -1177,4 +1177,5 @@ function App() {
 }
 
 export default App
+
 
