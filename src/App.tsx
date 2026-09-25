@@ -517,7 +517,7 @@ function App() {
       await newRoom.connect(LIVEKIT_URL, token)
 
       const microphoneTrack = await createLocalAudioTrack({
-        echoCancellation: true,
+        echoCancellation: false,
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
@@ -1177,4 +1177,3 @@ function App() {
 }
 
 export default App
-
